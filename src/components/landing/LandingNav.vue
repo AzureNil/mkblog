@@ -1,7 +1,74 @@
 <script setup>
+import { onMounted, onBeforeUnmount, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import NavDropdown from './NavDropdown.vue'
 import logo from '@/assets/images/logo-placeholder.svg'
+import { useAuthStore } from '@/stores/auth'
+
+const auth = useAuthStore()
+
+const utilities = ref(null)
+const activeMenu = ref(null)
+const CLOSE_DELAY = 150
+let closeTimer
+let openReason = null
+
+function cancelClose() {
+  clearTimeout(closeTimer)
+  closeTimer = undefined
+}
+
+function closeMenu() {
+  cancelClose()
+  activeMenu.value = null
+  openReason = null
+}
+
+function openMenu(id, reason) {
+  cancelClose()
+  if (activeMenu.value !== id || reason !== 'hover') openReason = reason
+  activeMenu.value = id
+}
+
+function toggleMenu(id, reason) {
+  // Hover may already have opened the panel before the first mouse click.
+  // That first click keeps it open; another click toggles it closed.
+  if (activeMenu.value === id && openReason !== 'hover') closeMenu()
+  else openMenu(id, reason)
+}
+
+function requestClose(id, delayed) {
+  cancelClose()
+  if (activeMenu.value !== id) return
+  if (delayed) {
+    closeTimer = setTimeout(() => {
+      if (activeMenu.value === id) closeMenu()
+    }, CLOSE_DELAY)
+  } else closeMenu()
+}
+
+function onOutsidePointerDown(event) {
+  if (!utilities.value?.contains(event.target)) closeMenu()
+}
+
+function onEscape(event) {
+  if (event.key !== 'Escape' || !activeMenu.value) return
+  const trigger = utilities.value?.querySelector('[data-nav-trigger="' + activeMenu.value + '"]')
+  event.preventDefault()
+  closeMenu()
+  trigger?.focus()
+}
+
+onMounted(() => {
+  document.addEventListener('pointerdown', onOutsidePointerDown, true)
+  document.addEventListener('keydown', onEscape)
+})
+
+onBeforeUnmount(() => {
+  cancelClose()
+  document.removeEventListener('pointerdown', onOutsidePointerDown, true)
+  document.removeEventListener('keydown', onEscape)
+})
 </script>
 
 <template>
@@ -13,17 +80,55 @@ import logo from '@/assets/images/logo-placeholder.svg'
       <RouterLink class="entry entry--public" to="/blog">
         PUBLIC BLOG <span aria-hidden="true">↗</span>
       </RouterLink>
-      <RouterLink class="entry entry--private" to="/login">
+      <RouterLink class="entry entry--private" to="/workspace">
         PRIVATE LAB <span aria-hidden="true">↗</span>
       </RouterLink>
     </nav>
-    <nav class="landing-nav__utilities" aria-label="网站选项（稍后开放）">
-      <NavDropdown label="Menu"><p>菜单内容待添加</p></NavDropdown>
-      <NavDropdown label="User">
-        <p>登录功能暂未开放</p>
-        <p>注册暂未开放</p>
+    <nav ref="utilities" class="landing-nav__utilities" aria-label="网站选项">
+      <NavDropdown
+        label="MENU"
+        menu-id="menu"
+        :open="activeMenu === 'menu'"
+        @open="openMenu('menu', $event)"
+        @toggle="toggleMenu('menu', $event)"
+        @close="requestClose('menu', $event)"
+        @cancel-close="cancelClose"
+      >
+        <p class="dropdown-placeholder">导航内容待添加</p>
       </NavDropdown>
-      <NavDropdown label="Language"><p>中文（简体）</p></NavDropdown>
+      <NavDropdown
+        label="User"
+        menu-id="user"
+        :open="activeMenu === 'user'"
+        @open="openMenu('user', $event)"
+        @toggle="toggleMenu('user', $event)"
+        @close="requestClose('user', $event)"
+        @cancel-close="cancelClose"
+      >
+        <!-- A future authenticated parent can supply this slot using real user state. -->
+        <slot name="user">
+          <template v-if="!auth.isAuthenticated">
+            <RouterLink class="dropdown-item" to="/login" @click="closeMenu">登录</RouterLink>
+            <RouterLink class="dropdown-item" to="/register" @click="closeMenu">注册</RouterLink>
+          </template>
+          <template v-else>
+            <p class="dropdown-placeholder">{{ auth.user.username }}</p>
+            <p class="dropdown-placeholder">用户类型：{{ auth.user.type }}</p>
+            <button class="dropdown-item" type="button" @click="auth.clearSession(); closeMenu()">退出登录</button>
+          </template>
+        </slot>
+      </NavDropdown>
+      <NavDropdown
+        label="Language"
+        menu-id="language"
+        :open="activeMenu === 'language'"
+        @open="openMenu('language', $event)"
+        @toggle="toggleMenu('language', $event)"
+        @close="requestClose('language', $event)"
+        @cancel-close="cancelClose"
+      >
+        <p class="dropdown-language"><span aria-hidden="true">✓</span> 中文（简体）<span class="visually-hidden">，已选中</span></p>
+      </NavDropdown>
     </nav>
   </header>
 </template>
@@ -62,6 +167,7 @@ import logo from '@/assets/images/logo-placeholder.svg'
 .entry span { font-size: 20px; font-weight: 400; }
 .entry:hover { filter: brightness(1.08); }
 .landing-nav__utilities {
+  position: relative;
   justify-self: end;
   display: flex;
   border-radius: 12px;
@@ -101,5 +207,39 @@ import logo from '@/assets/images/logo-placeholder.svg'
 }
 @media (prefers-reduced-motion: no-preference) {
   .landing-nav { animation: nav-enter 600ms ease-out 250ms backwards; }
+}
+
+.dropdown-placeholder { margin: 0; font-size: 13px; color: #6b6573; }
+.dropdown-item {
+  display: block;
+  width: 100%;
+  padding: 12px 10px;
+  border: 0;
+  border-radius: 8px;
+  text-align: left;
+  color: #1d1a23;
+  background: transparent;
+  font-size: 14px;
+  cursor: pointer;
+}
+.dropdown-item:hover:not(:disabled),
+.dropdown-item:focus-visible { background: #f3edf9; }
+.dropdown-item:disabled { color: #817a8a; cursor: not-allowed; }
+.dropdown-language {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 0;
+  font-size: 14px;
+}
+.dropdown-language > [aria-hidden] { color: #8050bb; font-weight: 700; }
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 </style>
